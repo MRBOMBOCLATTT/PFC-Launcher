@@ -1,0 +1,77 @@
+name: Discord Release Notify
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Send changelog
+        env:
+          CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+        run: |
+          BODY=$(jq -Rs . <<< "${{ github.event.release.body }}")
+          TITLE="${{ github.event.release.name || github.event.release.tag_name }}"
+          URL="${{ github.event.release.html_url }}"
+          curl -s -H "Content-Type: application/json" -X POST "$CHANGELOG_WEBHOOK" -d @- <<EOF
+          {
+            "embeds": [{
+              "title": "PFC Launcher $TITLE",
+              "url": "$URL",
+              "description": $BODY,
+              "color": 5763719
+            }]
+          }
+          EOF
+
+      - name: Resolve download url
+        id: asset
+        run: |
+          URL=$(echo '${{ toJson(github.event.release.assets) }}' | jq -r '[.[] | select(.name | endswith(".exe"))][0].browser_download_url // empty')
+          if [ -z "$URL" ]; then
+            URL="${{ github.event.release.html_url }}"
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Update download message
+        env:
+          DOWNLOAD_WEBHOOK: ${{ secrets.DISCORD_DOWNLOAD_WEBHOOK }}
+        run: |
+          TAG="${{ github.event.release.tag_name }}"
+          DOWNLOAD_URL="${{ steps.asset.outputs.url }}"
+          STATE_FILE=".github/discord-download-message-id.txt"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "embeds": [{
+              "title": "Скачать PFC Launcher",
+              "description": "Актуальная версия: **$TAG**\n[Скачать]($DOWNLOAD_URL)",
+              "color": 5793266
+            }]
+          }
+          EOF
+          )
+
+          if [ -f "$STATE_FILE" ]; then
+            MSG_ID=$(cat "$STATE_FILE")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -X PATCH "$DOWNLOAD_WEBHOOK/messages/$MSG_ID" -d "$PAYLOAD")
+          else
+            STATUS="404"
+          fi
+
+          if [ "$STATUS" != "200" ]; then
+            RESPONSE=$(curl -s -H "Content-Type: application/json" -X POST "$DOWNLOAD_WEBHOOK?wait=true" -d "$PAYLOAD")
+            echo "$RESPONSE" | jq -r '.id' > "$STATE_FILE"
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git add "$STATE_FILE"
+            git commit -m "chore: update discord download message id"
+            git push
+          fi
