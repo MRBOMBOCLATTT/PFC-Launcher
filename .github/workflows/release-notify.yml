@@ -1,19 +1,22 @@
 name: Discord Release Notify
-
 on:
   release:
-    types: [published]
-
+    types: [published, edited]
 permissions:
   contents: write
-
 jobs:
   notify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: main
+      # published срабатывает сразу, пока body ещё пустой (electron-builder
+      # только что создал релиз). publishReleaseNotes.js дописывает body чуть
+      # позже отдельным PATCH-запросом — это порождает событие edited с уже
+      # заполненным body. Поэтому changelog в Discord шлём только на edited.
       - name: Send changelog
+        if: github.event.action == 'edited'
         env:
           CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
         run: |
@@ -34,7 +37,6 @@ jobs:
             }]
           }
           EOF
-
       - name: Resolve download url
         id: asset
         run: |
@@ -43,7 +45,6 @@ jobs:
             URL="${{ github.event.release.html_url }}"
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
-
       - name: Update download message
         env:
           DOWNLOAD_WEBHOOK: ${{ secrets.DISCORD_DOWNLOAD_WEBHOOK }}
@@ -51,7 +52,6 @@ jobs:
           TAG="${{ github.event.release.tag_name }}"
           DOWNLOAD_URL="${{ steps.asset.outputs.url }}"
           STATE_FILE=".github/discord-download-message-id.txt"
-
           BANNER="https://raw.githubusercontent.com/MRBOMBOCLATTT/PFC-Launcher/main/.github/assets/banner.png"
           PAYLOAD=$(cat <<EOF
           {
@@ -65,14 +65,12 @@ jobs:
           }
           EOF
           )
-
           if [ -f "$STATE_FILE" ]; then
             MSG_ID=$(cat "$STATE_FILE")
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -X PATCH "$DOWNLOAD_WEBHOOK/messages/$MSG_ID" -d "$PAYLOAD")
           else
             STATUS="404"
           fi
-
           if [ "$STATUS" != "200" ]; then
             RESPONSE=$(curl -s -H "Content-Type: application/json" -X POST "$DOWNLOAD_WEBHOOK?wait=true" -d "$PAYLOAD")
             echo "$RESPONSE" | jq -r '.id' > "$STATE_FILE"
@@ -80,5 +78,5 @@ jobs:
             git config user.email "actions@github.com"
             git add "$STATE_FILE"
             git commit -m "chore: update discord download message id"
-            git push
+            git push origin HEAD:main
           fi
