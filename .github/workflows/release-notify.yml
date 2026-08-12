@@ -11,12 +11,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-      # published срабатывает сразу, пока body ещё пустой (electron-builder
-      # только что создал релиз). publishReleaseNotes.js дописывает body чуть
-      # позже отдельным PATCH-запросом — это порождает событие edited с уже
-      # заполненным body. Поэтому changelog в Discord шлём только на edited.
+      # electron-builder тоже правит релиз при заливке exe и blockmap, и это
+      # тоже событие edited. Поэтому шлём в Discord не на любой edited, а
+      # только когда body реально содержит наш changelog (наш скрипт всегда
+      # начинает body с "# PFC Launcher").
       - name: Send changelog
-        if: github.event.action == 'edited'
+        if: startsWith(github.event.release.body, '# PFC Launcher')
         env:
           CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
         run: |
@@ -78,5 +78,9 @@ jobs:
             git config user.email "actions@github.com"
             git add "$STATE_FILE"
             git commit -m "chore: update discord download message id"
-            git push origin HEAD:main
+            for i in 1 2 3; do
+              git pull --rebase origin main && git push origin HEAD:main && break
+              echo "Push отклонён, пробую снова ($i)..."
+              sleep 3
+            done
           fi
