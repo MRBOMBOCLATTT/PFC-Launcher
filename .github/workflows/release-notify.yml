@@ -14,7 +14,7 @@ jobs:
       # electron-builder тоже правит релиз при заливке exe и blockmap, и это
       # тоже событие edited. Поэтому шлём в Discord не на любой edited, а
       # только когда body реально содержит наш changelog (наш скрипт всегда
-      # начинает body с "# PFC Launcher"). жопа
+      # начинает body с "# PFC Launcher").
       - name: Send changelog
         if: startsWith(github.event.release.body, '# PFC Launcher')
         env:
