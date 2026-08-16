@@ -19,52 +19,45 @@ jobs:
         if: startsWith(github.event.release.body, '# PFC Launcher')
         env:
           CHANGELOG_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          RELEASE_BODY: ${{ github.event.release.body }}
+          RELEASE_TITLE: ${{ github.event.release.name || github.event.release.tag_name }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
+          RELEASE_PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
-          BODY=$(jq -Rs . <<< "${{ github.event.release.body }}")
-          TITLE="${{ github.event.release.name || github.event.release.tag_name }}"
-          URL="${{ github.event.release.html_url }}"
+          BODY=$(jq -Rs . <<< "$RELEASE_BODY")
           BANNER="https://raw.githubusercontent.com/MRBOMBOCLATTT/PFC-Launcher/main/.github/assets/banner.png"
-          curl -s -H "Content-Type: application/json" -X POST "$CHANGELOG_WEBHOOK" -d @- <<EOF
-          {
-            "embeds": [{
-              "title": "🚀 PFC Launcher — $TITLE",
-              "url": "$URL",
-              "description": $BODY,
-              "color": 5763719,
-              "image": { "url": "$BANNER" },
-              "footer": { "text": "PFC Launcher Updates" },
-              "timestamp": "${{ github.event.release.published_at }}"
-            }]
-          }
-          EOF
+          jq -n \
+            --arg title "🚀 PFC Launcher — $RELEASE_TITLE" \
+            --arg url "$RELEASE_URL" \
+            --argjson description "$BODY" \
+            --arg banner "$BANNER" \
+            --arg timestamp "$RELEASE_PUBLISHED_AT" \
+            '{embeds: [{title: $title, url: $url, description: $description, color: 5763719, image: {url: $banner}, footer: {text: "PFC Launcher Updates"}, timestamp: $timestamp}]}' \
+            | curl -s -H "Content-Type: application/json" -X POST "$CHANGELOG_WEBHOOK" -d @-
       - name: Resolve download url
         id: asset
+        env:
+          RELEASE_ASSETS: ${{ toJson(github.event.release.assets) }}
+          RELEASE_URL: ${{ github.event.release.html_url }}
         run: |
-          URL=$(echo '${{ toJson(github.event.release.assets) }}' | jq -r '[.[] | select(.name | endswith(".exe"))][0].browser_download_url // empty')
+          URL=$(echo "$RELEASE_ASSETS" | jq -r '[.[] | select(.name | endswith(".exe"))][0].browser_download_url // empty')
           if [ -z "$URL" ]; then
-            URL="${{ github.event.release.html_url }}"
+            URL="$RELEASE_URL"
           fi
           echo "url=$URL" >> "$GITHUB_OUTPUT"
       - name: Update download message
         env:
           DOWNLOAD_WEBHOOK: ${{ secrets.DISCORD_DOWNLOAD_WEBHOOK }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
           DOWNLOAD_URL="${{ steps.asset.outputs.url }}"
           STATE_FILE=".github/discord-download-message-id.txt"
           BANNER="https://raw.githubusercontent.com/MRBOMBOCLATTT/PFC-Launcher/main/.github/assets/banner.png"
-          PAYLOAD=$(cat <<EOF
-          {
-            "embeds": [{
-              "title": "📥 Скачать PFC Launcher",
-              "description": "Актуальная версия: **$TAG**\n[Скачать]($DOWNLOAD_URL)",
-              "color": 5793266,
-              "image": { "url": "$BANNER" },
-              "footer": { "text": "Ссылка обновляется автоматически" }
-            }]
-          }
-          EOF
-          )
+          DESC=$(printf 'Актуальная версия: **%s**\n[Скачать](%s)' "$RELEASE_TAG" "$DOWNLOAD_URL")
+          PAYLOAD=$(jq -n \
+            --arg desc "$DESC" \
+            --arg banner "$BANNER" \
+            '{embeds: [{title: "📥 Скачать PFC Launcher", description: $desc, color: 5793266, image: {url: $banner}, footer: {text: "Ссылка обновляется автоматически"}}]}')
           if [ -f "$STATE_FILE" ]; then
             MSG_ID=$(cat "$STATE_FILE")
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -X PATCH "$DOWNLOAD_WEBHOOK/messages/$MSG_ID" -d "$PAYLOAD")
